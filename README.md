@@ -4,53 +4,65 @@
 ![pandas](https://img.shields.io/badge/pandas-2.0%2B-150458?logo=pandas)
 ![statsmodels](https://img.shields.io/badge/statsmodels-0.14%2B-orange)
 ![LightGBM](https://img.shields.io/badge/LightGBM-4.0%2B-green)
+![CI](https://github.com/Gavand1969/demand-forecasting-toolkit/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-A production-grade demand forecasting benchmark across **50 SKUs** and **4 automotive product families**, comparing a naive seasonal baseline, SARIMA, and LightGBM — with walk-forward backtesting, error metrics, and inventory dollar-impact estimation.
+A reproducible demand-forecasting benchmark across **50 SKUs** and **4 automotive product families**, comparing a naive seasonal baseline, SARIMA, and LightGBM under a **leakage-free walk-forward backtest**, with results translated into estimated inventory dollar impact.
 
-## Why This Exists
+## TL;DR for hiring managers
 
-During my time as an Operations & Parts Analyst in the automotive aftermarket, I saw firsthand how fragile a pure "last year same period" assumption becomes once promotional events, trending demand, or seasonal phase shifts enter the picture. A miscalibrated forecast at the SKU level cascades directly into stockouts on fast-moving brake components or dead inventory on slow-moving body panels — both of which have measurable dollar consequences. This toolkit reproduces that challenge at scale: synthetic demand is generated with realistic trend, seasonality, promo-lift, and noise for 50 part numbers across Engine Parts, Brake Systems, Electrical, and Body Panels. Three forecasting approaches are benchmarked head-to-head on a held-out 6-month backtest window, and results are tied back to estimated overstock and stockout carrying costs.
+- **Problem framed in operations terms.** Synthetic demand is generated with trend, annual seasonality, promo lifts, and noise — the same dynamics that break a "last-year-same-month" forecast in spare-parts planning.
+- **Three models, one honest comparison.** Naive seasonal, per-SKU SARIMA, and a global LightGBM with lag/rolling features, all evaluated on the same 6-month holdout.
+- **Leakage-free protocol.** Multi-step ML forecasts are produced *recursively* — the model never sees a held-out actual when constructing its own next-step features. (This was a real fix during the audit; see [Methodology](#methodology).)
+- **Tied back to dollars.** Forecast errors are converted to estimated stockout and overstock costs per family using documented assumptions, so the trade-off between under- and over-forecasting is visible.
+- **Testable.** A `pytest` suite asserts metric formulas, reproducibility, and that the ML pipeline cannot peek at test actuals. CI runs the suite plus a smoke-test of the full benchmark on every push.
 
 ---
 
-## Results Summary
+## Results summary
 
-Backtest: last 6 months held out (Jul–Dec 2024), trained on Jan 2023–Jun 2024 (18 months).
+Backtest: last 6 months held out (Jul–Dec 2024), trained on Jan 2023 – Jun 2024 (18 months).
 
 | Model | MAPE | WAPE | RMSE |
 |---|---|---|---|
 | Naive Seasonal (baseline) | 13.23% | 12.98% | 40.30 |
 | SARIMA (1,1,1)(1,0,0,12) | 28.14% | 28.68% | 106.67 |
-| **LightGBM w/ lag features** | **13.00%** | **11.85%** | **36.34** |
+| LightGBM, recursive walk-forward | 15.59% | 13.42% | 40.80 |
 
-**Key finding:** LightGBM edges out the naive seasonal baseline on all three metrics while also producing the lowest estimated inventory dollar impact. SARIMA underperforms on this short training window (18 months = 1.5 seasonal cycles), illustrating why statistical time-series models need longer history than ML approaches that can borrow signal across SKUs.
+**Read this honestly:** on this short 18-month training window, the naive seasonal baseline is genuinely hard to beat. LightGBM lands within ~0.5 pp of the baseline on WAPE/RMSE, while SARIMA underperforms because 18 months is only 1.5 seasonal cycles — exactly the kind of negative result you want to surface in a stakeholder review rather than hide. A longer history (3+ years) or a richer feature set (promo flags, price, cross-SKU trends) would be the next thing to try.
 
-### MAPE & WAPE by Model
-
+### MAPE & WAPE by model
 ![Model Comparison](reports/charts/01_model_comparison_mape.png)
 
-### MAPE Heatmap by Model and Product Family
-
+### MAPE heatmap by model and product family
 ![Family Heatmap](reports/charts/02_family_heatmap.png)
 
-### Forecast vs. Actual — SKU_001 (Engine Parts)
-
+### Forecast vs. actual — SKU_001 (Engine Parts)
 ![Forecast vs Actual](reports/charts/03_forecast_vs_actual_sample.png)
 
-### Error Distribution (All SKUs)
-
+### Error distribution (all SKUs)
 ![Error Distribution](reports/charts/04_error_distribution.png)
 
-### Estimated Inventory Dollar Impact
-
+### Estimated inventory dollar impact
 ![Inventory Impact](reports/charts/05_inventory_impact.png)
+
+---
+
+## Metrics — what each one tells you
+
+For actual $a_i$ and forecast $f_i$ across $n$ SKU-months (rows with $a_i = 0$ are excluded so MAPE stays defined):
+
+- **MAPE** — Mean Absolute Percentage Error: $\frac{1}{n}\sum_i \frac{|a_i - f_i|}{a_i}$. Easy to communicate; over-weights small-volume SKUs because a 10-unit miss on demand of 20 is the same 50% as a 100-unit miss on demand of 200.
+- **WAPE** — Weighted Absolute Percentage Error: $\frac{\sum_i |a_i - f_i|}{\sum_i a_i}$. Volume-weighted, so it tracks total units mis-forecast across the catalog — usually the right summary metric for inventory decisions.
+- **RMSE** — Root Mean Squared Error: $\sqrt{\frac{1}{n}\sum_i (a_i - f_i)^2}$. Penalizes large misses quadratically, so it surfaces tail-risk SKUs that MAPE can hide.
+
+All three are reported because they fail differently. A model that is best on MAPE but worst on RMSE is one that handles the easy SKUs well but blows up on a few important ones.
 
 ---
 
 ## Methodology
 
-### Data Generation
+### Data generation
 
 `src/generate_demand.py` creates a reproducible (seed=42) 24-month panel of monthly unit demand for 50 SKUs across four product families. Each SKU has:
 
@@ -60,24 +72,23 @@ Backtest: last 6 months held out (Jul–Dec 2024), trained on Jan 2023–Jun 202
 - 1–3 promotional lift events per SKU (15–40% above base)
 - Gaussian noise at 7% of base demand
 
-### Backtest Setup
+> The panel is synthetic — the families, magnitudes, and shape were chosen to mirror what I worked with as an automotive parts analyst, not real proprietary data. The benchmark numbers above are a property of *this generator*, not of LightGBM in general.
 
-All three models follow the same **walk-forward** protocol:
+### Backtest setup — walk-forward, no leakage
+
+All three models share the same protocol:
 
 - **Training window:** months 1–18 (Jan 2023 – Jun 2024)
 - **Test window:** months 19–24 (Jul 2024 – Dec 2024)
-- No data leakage: test actuals are never seen during model fitting
+- **Recursive multi-step forecasting for LightGBM:** at horizon $h>1$, lag and rolling features that fall inside the test window use the model's own prior forecasts, not the held-out actuals. The initial implementation built lag features off the full panel — see [audit/walk-forward-and-tests PR](#) — which silently leaked test actuals into the test-period features and inflated apparent MAPE by ~2.5 pp. The fix is asserted by `tests/test_no_leakage.py`.
 
 ### Models
 
-**1. Naive Seasonal Baseline** (`src/forecast_baseline.py`)  
-Forecast for month *t* = actual demand at month *t*−12. Simple, interpretable, and the industry default for spare-parts planning.
+**1. Naive seasonal baseline** (`src/forecast_baseline.py`). Forecast for month $t$ = actual demand at month $t-12$. The industry default for spare-parts planning, and the bar every other model must clear.
 
-**2. SARIMA** (`src/forecast_sarima.py`)  
-`SARIMA(1,1,1)(1,0,0,12)` fit independently per SKU using `statsmodels`. The seasonal AR(1) at lag 12 captures the annual cycle without seasonal differencing — important here because 18 training months is only 1.5 cycles, making D=1 numerically unstable. Falls back to Holt-Winters Exponential Smoothing for any SKU where the SARIMA fit produces explosive forecasts.
+**2. SARIMA** (`src/forecast_sarima.py`). `SARIMA(1,1,1)(1,0,0,12)` fit independently per SKU using `statsmodels`. The seasonal AR(1) at lag 12 captures the annual cycle *without* seasonal differencing — important here because 18 training months is only 1.5 cycles, making $D=1$ numerically unstable. Falls back to Holt-Winters Exponential Smoothing for any SKU where the SARIMA fit produces explosive forecasts.
 
-**3. LightGBM with Lag/Rolling Features** (`src/forecast_ml.py`)  
-A single global `LGBMRegressor` trained on all SKUs simultaneously, using:
+**3. LightGBM with lag/rolling features** (`src/forecast_ml.py`). A single global `LGBMRegressor` trained across all SKUs, using:
 
 | Feature | Description |
 |---|---|
@@ -88,30 +99,33 @@ A single global `LGBMRegressor` trained on all SKUs simultaneously, using:
 | `month` | Calendar month (1–12) |
 | `family_enc` | Label-encoded product family |
 
-Cross-SKU training lets the model generalize seasonal patterns even with limited per-SKU history — a key advantage over per-series statistical models.
+Cross-SKU training lets the model borrow seasonal signal across the panel — a meaningful advantage over per-series statistical models when each series is short.
 
-### Inventory Impact Estimation
+### Inventory impact estimation
 
-Error is translated to dollar impact using assumed unit costs per family and two cost drivers:
-- **Stockout cost:** 35% of unit cost per under-forecast unit (emergency sourcing / lost margin)
-- **Overstock cost:** 20% of unit cost per over-forecast unit (carrying / obsolescence)
+Errors are translated to dollars using assumed unit costs per family and two cost drivers:
 
-Results are in `reports/inventory_impact.csv`.
+- **Stockout cost:** `35% × unit_cost × under_forecast_units` — proxy for emergency procurement premiums and lost margin on missed sales.
+- **Overstock cost:** `20% × unit_cost × over_forecast_units` — proxy for carrying cost and obsolescence risk.
+
+These percentages are illustrative defaults; in a real engagement they'd come from finance. Unit costs are coded in `src/benchmark.py:UNIT_COST` — change them to match your scenario. Results land in `reports/inventory_impact.csv`.
 
 ---
 
-## How to Run
+## How to run
 
 ```bash
-# 1. Clone the repository
+# 1. Clone
 git clone https://github.com/Gavand1969/demand-forecasting-toolkit.git
 cd demand-forecasting-toolkit
 
-# 2. Install dependencies
+# 2. Install
 pip install -r requirements.txt
 
-# 3. Run the full benchmark (generates data, forecasts, charts, and summary)
+# 3. Run the full benchmark (data + 3 models + charts + summary)
 python src/benchmark.py
+#   or
+make bench
 ```
 
 Outputs land in:
@@ -128,24 +142,41 @@ python src/forecast_sarima.py
 python src/forecast_ml.py
 ```
 
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+#   or
+make test
+```
+
+The `tests/` directory contains 8 tests covering:
+- Reproducibility of the data generator under a fixed seed
+- MAPE / WAPE / RMSE numerical correctness on hand-checked toy data
+- Inventory-impact arithmetic against the documented formula
+- **No-leakage guards** asserting that the ML pipeline cannot use test-period actuals as features
+
+CI runs these tests plus a full benchmark smoke-test on every push and PR (`.github/workflows/ci.yml`).
+
 ---
 
-## What This Demonstrates
+## What this demonstrates
 
 | Skill | Evidence |
 |---|---|
-| **Time-series forecasting** | Three-model benchmark with SARIMA and gradient boosting |
-| **Feature engineering** | Lag, rolling mean/std, calendar, and cross-SKU features |
-| **Walk-forward backtesting** | Proper hold-out without data leakage |
-| **Error metric selection** | MAPE, WAPE, and RMSE — each with different failure-mode sensitivity |
-| **Inventory analytics** | Dollar-impact translation of forecast error |
-| **Data generation & reproducibility** | Seeded synthetic panel with realistic demand drivers |
-| **Python data stack** | pandas, statsmodels, LightGBM, matplotlib |
-| **Communication** | Benchmark charts and summary table suitable for business stakeholders |
+| Time-series forecasting | Three-model benchmark with SARIMA and gradient boosting |
+| Feature engineering | Lag, rolling mean/std, calendar, cross-SKU encoding |
+| **Leakage-free backtesting** | Recursive walk-forward + tests that fail on regressions |
+| Error metric selection | MAPE / WAPE / RMSE with documented trade-offs |
+| Inventory analytics | Dollar-impact translation of forecast error |
+| Reproducibility | Seeded synthetic panel + pinned dependencies + CI |
+| Python data stack | pandas, statsmodels, LightGBM, matplotlib |
+| Communication | Charts and metric tables aimed at non-technical stakeholders |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 demand-forecasting-toolkit/
@@ -153,23 +184,27 @@ demand-forecasting-toolkit/
 │   ├── generate_demand.py      # Synthetic 24-month demand panel (50 SKUs)
 │   ├── forecast_baseline.py    # Naive seasonal (same-period-last-year)
 │   ├── forecast_sarima.py      # SARIMA(1,1,1)(1,0,0,12) per SKU
-│   ├── forecast_ml.py          # LightGBM with lag/rolling features
-│   └── benchmark.py            # Orchestration, metrics, and 5 charts
-├── data/
-│   └── demand_panel.csv        # Generated on first run
-├── reports/
-│   ├── benchmark_summary.csv
-│   ├── inventory_impact.csv
-│   └── charts/
-│       ├── 01_model_comparison_mape.png
-│       ├── 02_family_heatmap.png
-│       ├── 03_forecast_vs_actual_sample.png
-│       ├── 04_error_distribution.png
-│       └── 05_inventory_impact.png
+│   ├── forecast_ml.py          # LightGBM, recursive walk-forward
+│   └── benchmark.py            # Orchestration, metrics, 5 charts
+├── tests/                      # pytest suite (metrics, leakage, repro)
+├── data/demand_panel.csv       # Generated on first run
+├── reports/                    # CSVs + charts/
+├── .github/workflows/ci.yml    # Tests + benchmark smoke-test
 ├── requirements.txt
+├── requirements-dev.txt
+├── Makefile
 ├── LICENSE                     # MIT, Copyright 2026 Gavin Anderson
 └── README.md
 ```
+
+---
+
+## Known limits and next steps
+
+- 24 months × 50 SKUs is a small panel by design — long enough to show seasonality, short enough that the benchmark runs end-to-end in under a minute. Real engagements would use 3+ years per SKU.
+- The SARIMA configuration is fixed; per-SKU order selection (e.g. `pmdarima.auto_arima`) would likely close the gap to LightGBM.
+- LightGBM features are deliberately minimal. Adding promo indicators, price, and exogenous calendar features would be the obvious next experiment.
+- The dollar-impact percentages (35% stockout, 20% overstock) are illustrative — calibrate to your business before quoting numbers.
 
 ---
 
