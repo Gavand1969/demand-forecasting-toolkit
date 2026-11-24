@@ -158,7 +158,7 @@ def estimate_inventory_impact(pred_df, model_name):
 def chart1_model_comparison(summary_df, ml_model_name):
     """Bar chart: MAPE and WAPE side-by-side per model."""
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
-    fig.suptitle("Model Comparison — Backtest Error Metrics\n(6-Month Walk-Forward Hold-Out)", fontsize=13, fontweight="bold")
+    fig.suptitle("Model Comparison — Backtest Error Metrics\n(Jul–Dec 2024 Holdout)", fontsize=13, fontweight="bold")
 
     models = summary_df["model"].tolist()
     labels = [m.replace("_", " ").title() for m in models]

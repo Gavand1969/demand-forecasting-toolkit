@@ -8,7 +8,7 @@ heavy seasonal differencing is numerically unstable. We use:
     (captures the annual pattern via the lag-12 AR term)
   - Falls back to Holt-Winters Exponential Smoothing per SKU if SARIMA fails
 
-Walk-forward: train on first 18 months, forecast last 6.
+Fixed origin: train on the first 18 months and forecast all six holdout months at once.
 
 Outputs: reports/sarima_predictions.csv, reports/sarima_sku_metrics.csv
 """
@@ -48,7 +48,7 @@ def holtwinters_forecast(series_train, n_forecast):
             seasonal_periods=12,
             initialization_method="estimated",
         )
-        fit = model.fit(optimized=True, disp=False)
+        fit = model.fit(optimized=True)
         return np.maximum(0, fit.forecast(n_forecast).values)
     except Exception:
         # Last-resort: repeat last value
