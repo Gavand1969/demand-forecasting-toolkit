@@ -12,7 +12,8 @@ Features engineered per SKU-month observation:
   - month (1-12)              : calendar month
   - family_enc                : label-encoded product family
 
-Walk-forward: train on first 18 months, predict last 6.
+Fit on the first 18 months; forecast each of the final six months using only
+demand observed before that month. The fitted parameters remain unchanged.
 
 Outputs: reports/ml_predictions.csv, reports/ml_sku_metrics.csv
 """
@@ -53,12 +54,12 @@ def load_data():
 
 def build_features(df):
     """Build lag/rolling features for all SKUs."""
+    df = df.sort_values(["sku_id", "date"]).reset_index(drop=True)
     family_map = {f: i for i, f in enumerate(sorted(df["family"].unique()))}
     df["family_enc"] = df["family"].map(family_map)
     df["month"] = df["date"].dt.month
 
     # Per-SKU lag and rolling features
-    df = df.sort_values(["sku_id", "date"])
     grp = df.groupby("sku_id")["demand"]
 
     df["lag_1"] = grp.shift(1)
